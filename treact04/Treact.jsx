@@ -1,9 +1,30 @@
+
+// 定义 requestIdleCallback 的兼容处理，不执行则用setTimeout模拟实现
+window.requestIdleCallback = window.requestIdleCallback || function (handler) {
+    // 闭包，创建的时候记录一下时间
+    let startTime = Date.now();
+    return setTimeout(function () {
+        handler({
+            didTimeout: false,
+            timeRemaining: function () {
+                // 理论上系统给你空闲的时间会低于50ms，所以你的任务最好不要超过50ms，否则还是会卡顿
+                return Math.max(0, 50.0 - (Date.now() - startTime));
+            }
+        });
+    }, 1);
+};
+// 取消任务
+window.cancelIdleCallback = window.cancelIdleCallback || function (id) {
+    clearTimeout(id);
+};
 export function createElement(type, props, ...children) {
     return {
         type,
         props: {
             ...props,
-            children: children.map(child => {
+            children: children
+            .flat()
+            .map(child => {
                 if (typeof child != 'object') {
                     return {
                         type: 'HostText',
@@ -42,14 +63,26 @@ class TreactRoot {
      * 2. 初始化children中的fiber节点，返回下一个要执行的fiber节点next
      */
     performUnitOfWork(fiber) {
-        if (!fiber.stateNode) {
-            fiber.stateNode = fiber.type === 'HostText' ? document.createTextNode('') : document.createElement(fiber.type);
-            Object.keys(fiber.props).filter(key => key != 'children').forEach(key => {
-                fiber.stateNode[key] = fiber.props[key];
-            })
-        }
-        if (fiber.return) {
-            fiber.return.stateNode.appendChild(fiber.stateNode);
+        console.log('fiber props', fiber.props,fiber.props==null?JSON.stringify(fiber.return.props.children):'' );
+
+        const isFunctionComp = fiber.type instanceof Function;
+        if (isFunctionComp) {
+            fiber.props.children = [fiber.type(fiber.props)];
+        } else {
+            if (!fiber.stateNode) {
+                fiber.stateNode = fiber.type === 'HostText' ? document.createTextNode('') : document.createElement(fiber.type);
+                Object.keys(fiber.props).filter(key => key != 'children').forEach(key => {
+                    fiber.stateNode[key] = fiber.props[key];
+                })
+            }
+
+            if (fiber.return) {
+                let tempParenNode = fiber.return;
+                while (!tempParenNode.stateNode) {
+                    tempParenNode = tempParenNode.return;
+                }
+                tempParenNode.stateNode.appendChild(fiber.stateNode);
+            }
         }
         // 用链表处理child
         let preSibling = null;
@@ -112,10 +145,10 @@ export function createRoot(container) {
 export function act(callback) {
     callback();
     return new Promise((resolve, reject) => {
-        function detect(){
-            if(workInProgress){
+        function detect() {
+            if (workInProgress) {
                 window.requestIdleCallback(detect);
-            }else{
+            } else {
                 resolve(true);
             }
         }
