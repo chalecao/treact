@@ -154,6 +154,7 @@ describe('event handler test', () => {
       container.querySelector('.button').click();
       container.querySelector('.button').click();
     });
+    
     console.log('container.innerHTML', container.innerHTML);
     expect(globalObj.count).toBe(2);
     expect(container.innerHTML).toBe('<div class="button">2<ol><li>0</li><li>1</li></ol></div>');

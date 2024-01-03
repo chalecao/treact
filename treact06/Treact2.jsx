@@ -47,9 +47,9 @@ let currentHookFiberIndex = 0;
 const isEvent = (key) => /^on/.test(key);
 const filerProps = (key) => !isEvent(key) && key != 'children';
 
-const isNew = (old, next) => (key) => !(key in old.props) && (key in next.props);
-const isChanged = (old, next) => (key) => (key in old.props) && (key in next.props) && old.props[key] != next.props[key];
-const isDelete = (old, next) => (key) => (key in old.props) && !(key in next.props);
+const isNew = (old, next)=>(key)=> !(key in old.props) && (key in next.props);
+const isChanged = (old, next)=>(key)=> (key in old.props) && (key in next.props) && old.props[key] != next.props[key];
+const isDelete = (old, next)=>(key)=> (key in old.props) && !(key in next.props) ;
 
 class TreactRoot {
     _internalRoot = null;
@@ -92,6 +92,7 @@ function workloop() {
 function performUnitOfWork(fiber) {
     // console.log('fiber props', fiber.props, fiber.props == null ? JSON.stringify(fiber.return.props.children) : '');
     const isFunctionComp = fiber.type instanceof Function;
+    let needHandleProps = false;
     if (isFunctionComp) {
         currentHookFiber = fiber;
         currentHookFiber.memorizedState = [];
@@ -100,12 +101,13 @@ function performUnitOfWork(fiber) {
     } else {
         if (!fiber.stateNode) {
             fiber.stateNode = fiber.type === 'HostText' ? document.createTextNode('') : document.createElement(fiber.type);
+            needHandleProps = true;
         }
     }
-    reconcile(fiber);
+    reconcile(fiber, needHandleProps);
     return getNextFiber(fiber);
 }
-function reconcile(fiber, needHandleProps) {
+function reconcile(fiber) {
     // 用链表处理child
     let preSibling = null;
     // dom diff: mount/update/delete
@@ -142,15 +144,12 @@ function reconcile(fiber, needHandleProps) {
             }
         } else if (!isSameType && oldFiber) {
             // delete 
-            oldFiber.effectTag = 'DELETE';
-            if (!workInProgressRoot.deleteFibers) workInProgressRoot.deleteFibers = [];
-            workInProgressRoot.deleteFibers.push(oldFiber);
         }
 
         if (idx == 0) {
             fiber.child = newFiber;
         } else {
-            preSibling && (preSibling.sibling = newFiber);
+            preSibling.sibling = newFiber;
         }
         if (oldFiber) {
             oldFiber = oldFiber.sibling;
@@ -180,18 +179,12 @@ function getNextFiber(fiber) {
 }
 
 function commitRoot() {
-    // 删除节点
-    if(workInProgressRoot.deleteFibers){
-        workInProgressRoot.deleteFibers?.forEach(commitDOM);
-        workInProgressRoot.deleteFibers = [];
-    }
     // 处理DOM挂载
     commitDOM(workInProgressRoot.current.alternate.child);
     // fiber节点render之后，交换alternate
     workInProgressRoot.current = workInProgressRoot.current.alternate;
     workInProgressRoot.current.alternate = null;
 }
-
 function commitDOM(fiber) {
     let tempParenNode = null;
     if (fiber.return && fiber.stateNode) {
@@ -201,12 +194,10 @@ function commitDOM(fiber) {
         }
     }
     if (tempParenNode && fiber.effectTag === 'PLACEMENT') {
-        updateDom({ props: {} }, fiber);
+        updateDom({props:{}}, fiber);
         tempParenNode.stateNode.appendChild(fiber.stateNode);
-    } else if (tempParenNode && fiber.effectTag === 'UPDATE') {
+    }else if(tempParenNode && fiber.effectTag === 'UPDATE'){
         updateDom(fiber.alternate, fiber);
-    } else if (tempParenNode && fiber.effectTag === 'DELETE') {
-        deleteDOM(tempParenNode, fiber);
     }
     if (fiber.child) {
         commitDOM(fiber.child);
@@ -215,45 +206,32 @@ function commitDOM(fiber) {
         commitDOM(fiber.sibling);
     }
 }
-
-function deleteDOM(parent, fiber) {
-    if (fiber.stateNode) {
-        // 函数式
-        if (parent.stateNode.contains(fiber.stateNode)) {
-            parent.stateNode.removeChild(fiber.stateNode);
-        }
-    } else {
-        deleteDOM(parent, fiber.child);
-    }
-}
-
-function updateDom(pre, next) {
+function updateDom(pre, next){
     //事件处理
     Object.keys(pre.props).filter(isEvent).filter(
-        key => isDelete(pre, next)(key) || isChanged(pre, next)(key)
+        key=> isDelete(pre, next)(key) || isChanged(pre, next)(key)
     ).forEach(key => {
         const eventName = key.toLowerCase().substring(2);
         next.stateNode.removeEventListener(eventName, next.props[key]);
     });
     Object.keys(next.props).filter(isEvent).filter(
-        key => isNew(pre, next)(key) || isChanged(pre, next)(key)
+        key=> isNew(pre, next)(key) || isChanged(pre, next)(key)
     ).forEach(key => {
         const eventName = key.toLowerCase().substring(2);
         next.stateNode.addEventListener(eventName, next.props[key]);
     });
     // 属性处理
     Object.keys(pre.props).filter(filerProps).filter(
-        key => isDelete(pre, next)(key)
+        key=> isDelete(pre, next)(key)
     ).forEach(key => {
         next.stateNode[key] = '';
     });
     Object.keys(next.props).filter(filerProps).filter(
-        key => isNew(pre, next)(key) || isChanged(pre, next)(key)
+        key=> isNew(pre, next)(key) || isChanged(pre, next)(key)
     ).forEach(key => {
         next.stateNode[key] = next.props[key];
     });
 }
-
 export function createRoot(container) {
     return new TreactRoot(container);
 }
