@@ -44,6 +44,13 @@ let workInProgressRoot = null; // fiber root节点
 let currentHookFiber = null;
 let currentHookFiberIndex = 0;
 
+const isEvent = (key) => /^on/.test(key);
+const filerProps = (key) => !isEvent(key) && key != 'children';
+
+const isNew = (old, next) => (key) => !(key in old.props) && (key in next.props);
+const isChanged = (old, next) => (key) => (key in old.props) && (key in next.props) && old.props[key] != next.props[key];
+const isDelete = (old, next) => (key) => (key in old.props) && !(key in next.props);
+
 class TreactRoot {
     _internalRoot = null;
     constructor(container) {
@@ -75,8 +82,7 @@ function workloop() {
         workInProgress = performUnitOfWork(workInProgress);
     }
     if (!workInProgress && workInProgressRoot.current.alternate) {
-        workInProgressRoot.current = workInProgressRoot.current.alternate;
-        workInProgressRoot.current.alternate = null;
+        commitRoot();
     }
 }
 /**
@@ -94,26 +100,23 @@ function performUnitOfWork(fiber) {
     } else {
         if (!fiber.stateNode) {
             fiber.stateNode = fiber.type === 'HostText' ? document.createTextNode('') : document.createElement(fiber.type);
-            Object.keys(fiber.props).filter(key => key != 'children').forEach(key => {
-                fiber.stateNode[key] = fiber.props[key];
-            })
-        }
-
-        if (fiber.return) {
-            let tempParenNode = fiber.return;
-            while (!tempParenNode.stateNode) {
-                tempParenNode = tempParenNode.return;
-            }
-            tempParenNode.stateNode.appendChild(fiber.stateNode);
         }
     }
+    reconcile(fiber);
+    return getNextFiber(fiber);
+}
+function reconcile(fiber, needHandleProps) {
     // 用链表处理child
     let preSibling = null;
-    // mount时oldFiber是空，update阶段有数据
+    // dom diff: mount/update/delete
     let oldFiber = fiber.alternate?.child;
-    fiber.props.children.forEach((child, idx) => {
+    // fiber.props?.children.forEach((child, idx) => {
+    let idx = 0;
+    while (idx < fiber.props?.children.length || oldFiber) {
+        const child = fiber.props?.children[idx];
         let newFiber = null;
-        if (!oldFiber) {
+        let isSameType = oldFiber && child && oldFiber.type == child.type;
+        if (child && (!oldFiber || !isSameType)) {
             // mount
             newFiber = {
                 type: child.type,
@@ -123,8 +126,9 @@ function performUnitOfWork(fiber) {
                 alternate: null,
                 child: null,
                 sibling: null,
+                effectTag: 'PLACEMENT'
             }
-        } else {
+        } else if (isSameType && oldFiber) {
             // update
             newFiber = {
                 type: child.type,
@@ -134,21 +138,27 @@ function performUnitOfWork(fiber) {
                 alternate: oldFiber,
                 child: null,
                 sibling: null,
+                effectTag: 'UPDATE'
             }
+        } else if (!isSameType && oldFiber) {
+            // delete 
+            oldFiber.effectTag = 'DELETE';
+            if (!workInProgressRoot.deleteFibers) workInProgressRoot.deleteFibers = [];
+            workInProgressRoot.deleteFibers.push(oldFiber);
         }
 
         if (idx == 0) {
             fiber.child = newFiber;
         } else {
-            preSibling.sibling = newFiber;
+            preSibling && (preSibling.sibling = newFiber);
         }
         if (oldFiber) {
             oldFiber = oldFiber.sibling;
         }
         preSibling = newFiber;
-    })
 
-    return getNextFiber(fiber);
+        idx++;
+    }
 }
 /**
  * 遍历顺序
@@ -167,6 +177,78 @@ function getNextFiber(fiber) {
         }
     }
     return null;
+}
+
+function commitRoot() {
+    // 删除节点
+    workInProgressRoot?.deleteFibers?.forEach(commitDOM);
+    // 处理DOM挂载
+    commitDOM(workInProgressRoot.current.alternate.child);
+    // fiber节点render之后，交换alternate
+    workInProgressRoot.current = workInProgressRoot.current.alternate;
+    workInProgressRoot.current.alternate = null;
+}
+
+function commitDOM(fiber) {
+    let tempParenNode = null;
+    if (fiber.return && fiber.stateNode) {
+        tempParenNode = fiber.return;
+        while (!tempParenNode.stateNode) {
+            tempParenNode = tempParenNode.return;
+        }
+    }
+    if (tempParenNode && fiber.effectTag === 'PLACEMENT') {
+        updateDom({ props: {} }, fiber);
+        tempParenNode.stateNode.appendChild(fiber.stateNode);
+    } else if (tempParenNode && fiber.effectTag === 'UPDATE') {
+        updateDom(fiber.alternate, fiber);
+    } else if (tempParenNode && fiber.effectTag === 'DELETE') {
+        deleteDOM(tempParenNode, fiber);
+    }
+    if (fiber.child) {
+        commitDOM(fiber.child);
+    }
+    if (fiber.sibling) {
+        commitDOM(fiber.sibling);
+    }
+}
+
+function deleteDOM(parent, fiber) {
+    if (fiber.stateNode) {
+        // 函数式
+        if (parent.stateNode.contains(fiber.stateNode)) {
+            parent.stateNode.removeChild(fiber.stateNode);
+        }
+    } else {
+        deleteDOM(parent, fiber.child);
+    }
+}
+
+function updateDom(pre, next) {
+    //事件处理
+    Object.keys(pre.props).filter(isEvent).filter(
+        key => isDelete(pre, next)(key) || isChanged(pre, next)(key)
+    ).forEach(key => {
+        const eventName = key.toLowerCase().substring(2);
+        next.stateNode.removeEventListener(eventName, next.props[key]);
+    });
+    Object.keys(next.props).filter(isEvent).filter(
+        key => isNew(pre, next)(key) || isChanged(pre, next)(key)
+    ).forEach(key => {
+        const eventName = key.toLowerCase().substring(2);
+        next.stateNode.addEventListener(eventName, next.props[key]);
+    });
+    // 属性处理
+    Object.keys(pre.props).filter(filerProps).filter(
+        key => isDelete(pre, next)(key)
+    ).forEach(key => {
+        next.stateNode[key] = '';
+    });
+    Object.keys(next.props).filter(filerProps).filter(
+        key => isNew(pre, next)(key) || isChanged(pre, next)(key)
+    ).forEach(key => {
+        next.stateNode[key] = next.props[key];
+    });
 }
 
 export function createRoot(container) {
