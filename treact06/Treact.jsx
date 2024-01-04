@@ -76,10 +76,10 @@ class TreactRoot {
         window.requestIdleCallback(workloop, { timeout: 100 });
     }
 }
-
 function workloop() {
-    while (workInProgress) {
+    if (workInProgress) {
         workInProgress = performUnitOfWork(workInProgress);
+        window.requestIdleCallback(workloop, { timeout: 100 });
     }
     if (!workInProgress && workInProgressRoot.current.alternate) {
         commitRoot();

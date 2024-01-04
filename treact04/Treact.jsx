@@ -54,8 +54,9 @@ class TreactRoot {
         }
     }
     workloop() {
-        while (workInProgress) {
+        if (workInProgress) {
             workInProgress = this.performUnitOfWork(workInProgress);
+            window.requestIdleCallback(this.workloop.bind(this), { timeout: 100 });
         }
     }
     /**
